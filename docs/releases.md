@@ -1,5 +1,11 @@
 # Installing a prebuilt Miningcore release
 
+The version-specific installation examples in this guide reference NINJAK1DD's upstream releases
+and image. They do not establish that the same version exists in the `arqop/miningcore` fork.
+For a fork release, first verify its version and assets at
+https://github.com/arqop/miningcore/releases, then use that release's matching source, archive and
+`ghcr.io/arqop/miningcore` image references consistently.
+
 ## Emergency wallet control protocol 2
 
 Wallet batch completion now requires the PostgreSQL session that admitted it,
@@ -2102,7 +2108,7 @@ request builds both the source and packaged Dockerfiles, checks `ldd -r` provide
 and performs a managed ZeroMQ load inside each final image. An uncached dependency build
 validates the current apt package names; an APT layer cache hit validates only the previously
 installed snapshot, not current archive/package availability. The source dependency warmer
-refreshes with `pull` and `no-cache` on relevant pushes to `dev` and weekly on the default
+refreshes with `pull` and `no-cache` on relevant pushes to `develop` and weekly on the default
 branch once merged. Apt package
 names are not OCI image references and therefore remain outside the digest-based release image-pin
 monitor.
@@ -3441,9 +3447,40 @@ merged-mining support before it can be offered as a Miningcore template.
 This section is for repository maintainers. Operators installing or recovering a service should use
 the task links at the top of this guide and the [troubleshooting guide](troubleshooting.md).
 
+### Branches, upstream sync and repository settings
+
+Use `develop` as the default integration branch and `main` as the production branch. Send feature
+and dependency changes to `develop`; merge a reviewed release PR from `develop` into `main`.
+For a production hotfix, PR into `main`, then merge `main` back into `develop`. Preserve merge
+ancestry for release and upstream-sync PRs rather than squash-merging them.
+
+To review upstream updates, fetch `origin/develop` and `upstream/dev` with `--no-tags`, create a
+sync branch from `origin/develop`, merge `upstream/dev`, and open a PR into `develop`. Resolve
+conflicts and review upstream workflow changes before merging. Do not copy upstream tags into the
+fork as releases: Git tags are shared across branches, so select a new, unused version.
+
+In GitHub repository settings, set `develop` as the default branch and enable Actions. Protect
+`develop` and `main` with PR reviews and the non-path-filtered .NET, Stratum and Release checks;
+restrict direct pushes and release-tag creation. Configure permissions to allow the release workflow
+to write releases and packages. Scheduled workflows use the default branch. The tag ancestry check
+is not a substitute for branch or tag protection: an actor who can tag unreviewed workflow code
+could change the check itself. Merge these workflow changes into `main` before creating release tags.
+
+Use `vMAJOR.MINOR.PATCH`, optionally with a prerelease suffix such as `-rc.1`. Major versions signal
+incompatible changes, minor versions backward-compatible features, and patch versions compatible
+fixes; define compatibility expectations explicitly while the major version is zero. Release tags
+do not support SemVer build metadata (`+...`) because OCI tags cannot contain `+`. A prerelease
+does not move the stable `latest` aliases. The release and any earlier release candidate are
+separate builds, not a guarantee of the same image digest.
+
+After GHCR qualification below, set `GHCR_PUBLICATION_QUALIFIED=true` in Actions variables.
+Following the first publication, make the fork's GHCR package public in package settings and
+verify an anonymous pull. Repository and organization policies may require administrative changes;
+the workflow cannot enable those settings itself.
+
 ### Build and package contract
 
-The release workflow accepts SemVer tags reachable from `dev`, for example `v0.4.0-rc.1` or
+The release workflow accepts SemVer tags reachable from `main`, for example `v0.4.0-rc.1` or
 `v0.3.0`. It first builds and smoke-tests the Ubuntu 26.04-based source `Dockerfile`, then builds and
 fully tests separate Ubuntu 26.04 primary and Ubuntu 22.04 compatibility archives. The Jammy archive
 is built inside an Ubuntu 22.04 job container on a maintained hosted runner, so its publication does
@@ -3498,13 +3535,13 @@ Secret detection covers both dot and bracket access, including workflow/job envi
 All checkout steps disable persistent Git credentials. Public repository fetches remain anonymous;
 release publication uses its existing explicitly supplied API tokens rather than checkout state.
 Specifically, `Validate release tag` in `.github/workflows/release.yml` runs
-`git fetch --no-tags origin dev` anonymously on tag builds. Before making this repository private,
+`git fetch --no-tags origin main` anonymously on tag builds. Before making this repository private,
 provide narrowly scoped, ephemeral authentication for that fetch and validate a tag build; otherwise
 it will fail authentication because checkout no longer retains Git credentials. Do not restore
 persistent credentials to PR checkouts to accommodate a private release fetch.
 
 GitHub Actions version updates run weekly as one Dependabot group, with `ci(actions):` titles.
-Both Actions and NuGet omit `target-branch` and follow the default branch (currently `dev`), allowing
+Both Actions and NuGet omit `target-branch` and follow the default branch (set it to `develop`), allowing
 their configuration to apply to security updates too. NuGet keeps individual monthly version updates
 with `chore(deps):` titles so application-dependency changes can be reviewed separately.
 Security updates are advisory-driven and also require the repository security-update
@@ -3698,9 +3735,9 @@ exact match before packaging can begin.
 This additional source-container gate makes release runs longer but catches Dockerfile-only build
 failures before publication.
 
-Record the full SHA of the release-preparation commit as it actually lands on `dev`
+Record the full SHA of the release-preparation commit as it actually lands on `main`
 (the merge commit, or the resulting squash/rebase commit). Validate and commission
-that exact source identity. Tag that recorded SHA, not the later tip of `dev` or
+that exact source identity. Tag that recorded SHA, not the later tip of `main` or
 the PR head/synthetic test-merge ref. Later changes may use the next-cycle Unreleased
 heading and must not silently enter RC.1 during a gap before tagging. If a later
 commit is deliberately selected instead, review its full delta and repeat the
@@ -3717,14 +3754,14 @@ Prefer a signed annotated tag:
 NEXT_VERSION=v0.4.0-rc.1  # Replace with the next unused SemVer version.
 RELEASE_COMMIT=REPLACE_WITH_REVIEWED_MERGE_SHA
 if [[ "$RELEASE_COMMIT" =~ ^[0-9a-f]{40}$ ]] &&
-   git fetch origin dev &&
+   git fetch --no-tags origin main &&
    test "$(git rev-parse --verify "${RELEASE_COMMIT}^{commit}")" = "$RELEASE_COMMIT" &&
-   git merge-base --is-ancestor "$RELEASE_COMMIT" origin/dev; then
+   git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main; then
   git show --no-patch --format=fuller "$RELEASE_COMMIT" &&
     git tag -s "$NEXT_VERSION" "$RELEASE_COMMIT" -m "Miningcore $NEXT_VERSION" &&
     git push origin "$NEXT_VERSION"
 else
-  echo "STOP: select the reviewed full commit SHA reachable from origin/dev" >&2
+  echo "STOP: select the reviewed full commit SHA reachable from origin/main" >&2
   false
 fi
 ```
@@ -3825,9 +3862,9 @@ For an interrupted tag, inspect both services without changing them. Replace the
 do not move the Git tag:
 
 ```console
-export REPOSITORY=NINJAK1DD/miningcore
+export REPOSITORY=arqop/miningcore
 export TAG=v0.4.0-rc.1
-export IMAGE=ghcr.io/ninjak1dd/miningcore
+export IMAGE=ghcr.io/arqop/miningcore
 export STAGING_TAG="publication-staging-$TAG"
 
 release_pages=$(mktemp)

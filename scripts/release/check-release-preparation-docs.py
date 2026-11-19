@@ -95,9 +95,9 @@ def validate(documents, baseline):
     require(len(tag_blocks) == 1, 'Expected one exact-commit release tagging example')
     if len(tag_blocks) == 1:
         for fragment in ('RELEASE_COMMIT=REPLACE_WITH_REVIEWED_MERGE_SHA',
-                         'git merge-base --is-ancestor "$RELEASE_COMMIT" origin/dev',
+                         'git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main',
                          'git tag -s "$NEXT_VERSION" "$RELEASE_COMMIT" -m',
-                         'echo "STOP: select the reviewed full commit SHA reachable from origin/dev" >&2\n  false'):
+                         'echo "STOP: select the reviewed full commit SHA reachable from origin/main" >&2\n  false'):
             require(fragment in tag_blocks[0], f'Unsafe release target example: missing {fragment}')
     for fragment in ('If tag creation succeeded and only the push failed',
                      '`git rev-parse "${NEXT_VERSION}^{commit}"` exactly equals the recorded `RELEASE_COMMIT`',

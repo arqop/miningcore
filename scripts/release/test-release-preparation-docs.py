@@ -127,7 +127,7 @@ class ReleasePreparationTests(unittest.TestCase):
                       'git tag -s "$NEXT_VERSION" -m')
 
     def test_release_commit_reachability_is_required(self):
-        self.mutation('docs/releases.md', 'git merge-base --is-ancestor "$RELEASE_COMMIT" origin/dev', 'true')
+        self.mutation('docs/releases.md', 'git merge-base --is-ancestor "$RELEASE_COMMIT" origin/main', 'true')
 
     def test_stable_version_flip_policy_is_required(self):
         self.mutation('docs/releases.md', 'For a stable release, put the version flip', 'Leave every version unchanged')
@@ -138,8 +138,8 @@ class ReleasePreparationTests(unittest.TestCase):
 
     def test_rejected_tag_target_must_not_report_success(self):
         self.mutation('docs/releases.md',
-                      'echo "STOP: select the reviewed full commit SHA reachable from origin/dev" >&2\n  false',
-                      'echo "STOP: select the reviewed full commit SHA reachable from origin/dev" >&2')
+                      'echo "STOP: select the reviewed full commit SHA reachable from origin/main" >&2\n  false',
+                      'echo "STOP: select the reviewed full commit SHA reachable from origin/main" >&2')
 
     def test_tag_push_retry_requires_recorded_target_verification(self):
         self.mutation('docs/releases.md',

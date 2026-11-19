@@ -1,16 +1,21 @@
 # BTCPool.co.uk Miningcore
 
-[![.NET](https://github.com/NINJAK1DD/miningcore/actions/workflows/dotnet.yml/badge.svg?branch=dev)](https://github.com/NINJAK1DD/miningcore/actions/workflows/dotnet.yml)
-[![Release](https://img.shields.io/github/v/release/NINJAK1DD/miningcore?include_prereleases)](https://github.com/NINJAK1DD/miningcore/releases)
-[![License](https://img.shields.io/github/license/NINJAK1DD/miningcore)](LICENSE)
+[![.NET](https://github.com/arqop/miningcore/actions/workflows/dotnet.yml/badge.svg?branch=develop)](https://github.com/arqop/miningcore/actions/workflows/dotnet.yml)
+[![Release](https://img.shields.io/github/v/release/arqop/miningcore?include_prereleases)](https://github.com/arqop/miningcore/releases)
+[![License](https://img.shields.io/github/license/arqop/miningcore)](LICENSE)
 
 <img src="logo.png" width="150" alt="Miningcore logo">
 
-This is the Miningcore distribution maintained for [BTCPool.co.uk](https://btcpool.co.uk)
-SOLO mining service. The source repository is hosted by `NINJAK1DD`, and the `dev` branch is its
-primary integration branch. It builds on the
-[upstream Miningcore project](https://github.com/blackmennewstyle/miningcore) and retains credit to
-the original authors and contributors.
+This is the `arqop/miningcore` fork of the Miningcore distribution maintained by
+[NINJAK1DD](https://github.com/NINJAK1DD/miningcore) for the
+[BTCPool.co.uk](https://btcpool.co.uk) SOLO mining service. This fork uses `develop` for integration
+and `main` for production releases. It retains credit to the original authors and contributors,
+including the [upstream Miningcore project](https://github.com/blackmennewstyle/miningcore).
+
+The existing version-specific installation examples below refer to NINJAK1DD's published releases,
+not releases of this fork. For a fork release, verify its assets and version at
+[arqop/miningcore releases](https://github.com/arqop/miningcore/releases) and use the corresponding
+`ghcr.io/arqop/miningcore` image; do not assume an upstream version has been published by this fork.
 
 > **Production status:** the software targets the supported .NET 10 LTS runtime, but production
 > deployment still requires the operational controls below. Read
@@ -691,8 +696,8 @@ The skip inventory is the single source of truth; no separate count ceiling need
 Legitimate test removals, renames or skip changes require a reviewed baseline update;
 new passing tests are allowed. The baseline records its source commit and CI run.
 CI reports skipped cases and retains TRX results for 30 days.
-The repository's [Dev ruleset](https://github.com/NINJAK1DD/miningcore/rules/18480685) separately
-requires the `Build Windows x64` check from GitHub Actions before merging into `dev`.
+Configure branch protection to require the `Build Windows x64` check from GitHub Actions before
+merging into `develop` or `main`.
 With the .NET SDK and Visual Studio C++ workload described above installed, run locally with:
 
 ```powershell
@@ -807,9 +812,9 @@ sudo docker run -d \
 To build the same source locally instead:
 
 ```console
-git clone https://github.com/NINJAK1DD/miningcore.git
+git clone https://github.com/arqop/miningcore.git
 cd miningcore
-git checkout dev
+git checkout develop
 sudo docker build -t btcpool-miningcore:local .
 ```
 
@@ -1060,8 +1065,8 @@ reports an error or unexpected state.
 
 ## Contributions and support
 
-Submit changes as pull requests targeting [the `dev` branch](https://github.com/NINJAK1DD/miningcore/tree/dev).
-Use this repository's [issue tracker](https://github.com/NINJAK1DD/miningcore/issues) for reproducible
+Submit changes as pull requests targeting [the `develop` branch](https://github.com/arqop/miningcore/tree/develop).
+Use this repository's [issue tracker](https://github.com/arqop/miningcore/issues) for reproducible
 fork-specific bugs. Operational information for the hosted pool belongs on
 [BTCPool.co.uk](https://btcpool.co.uk), not in GitHub issues.
 
