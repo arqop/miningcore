@@ -5,12 +5,26 @@ set -euo pipefail
 script_directory="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "$script_directory/source-build-identity.sh"
 
+for tag in v1.2.3 v0.2.0-rc.1 v1.2.3-alpha--test.0; do
+  if ! miningcore_is_release_tag "$tag"; then
+    echo "Valid release tag rejected: $tag" >&2
+    exit 1
+  fi
+done
+for tag in v01.2.3 v1.2.3-rc.01 v1.2.3- v1.2.3-rc..1 v1.2.3+build.1; do
+  if miningcore_is_release_tag "$tag"; then
+    echo "Invalid or unsupported release tag accepted: $tag" >&2
+    exit 1
+  fi
+done
+
 test_repository="$(mktemp -d)"
 trap 'rm -rf "$test_repository"' EXIT
 
 git -C "$test_repository" init --quiet
 git -C "$test_repository" config user.name 'Miningcore Tests'
 git -C "$test_repository" config user.email 'tests@miningcore.invalid'
+git -C "$test_repository" config commit.gpgsign false
 printf 'source\n' > "$test_repository/source.txt"
 git -C "$test_repository" add source.txt
 git -C "$test_repository" commit --quiet -m 'test source'

@@ -404,6 +404,8 @@ for helper in "${helpers[@]}"; do
   cp "$repository_root/$helper" "$sandbox/$helper"
   cp "$repository_root/scripts/release/source-build-identity.sh" \
     "$sandbox/scripts/release/source-build-identity.sh"
+  cp "$repository_root/scripts/release/release-version.sh" \
+    "$sandbox/scripts/release/release-version.sh"
   cp "$repository_root/scripts/release/assert-warning-free-build.sh" \
     "$sandbox/scripts/release/assert-warning-free-build.sh"
   cp "$repository_root/scripts/release/audit-source-build-warnings.sh" \

@@ -3,6 +3,8 @@
 # Resolve optional assembly metadata for a source build. Development and feature
 # branches intentionally retain GitVersion's calculated version. A clean checkout
 # at one exact SemVer release tag receives the same identity as the release workflow.
+source "$(dirname "${BASH_SOURCE[0]}")/release-version.sh"
+
 miningcore_resolve_source_build_identity() {
   local repository_root="$1"
   local output_variable="$2"
@@ -18,7 +20,7 @@ miningcore_resolve_source_build_identity() {
   fi
 
   while IFS= read -r candidate; do
-    if [[ "$candidate" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+    if miningcore_is_release_tag "$candidate"; then
       release_tags+=("$candidate")
     fi
   done < <(git -C "$repository_root" tag --points-at HEAD --list 'v*')

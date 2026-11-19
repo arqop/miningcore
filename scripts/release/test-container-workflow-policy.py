@@ -4,6 +4,7 @@ from pathlib import Path
 from fnmatch import fnmatchcase
 import os
 import re
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -57,6 +58,9 @@ class WorkflowPolicyTests(unittest.TestCase):
             repository = root / 'work'
             subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
             subprocess.run(['git', 'init', '-b', 'main', str(repository)], check=True, capture_output=True)
+            script_dir = repository / 'scripts/release'
+            script_dir.mkdir(parents=True)
+            shutil.copyfile(ROOT / 'scripts/release/release-version.sh', script_dir / 'release-version.sh')
 
             def git(*args):
                 return subprocess.run(['git', '-C', str(repository), *args], check=True,
@@ -70,7 +74,9 @@ class WorkflowPolicyTests(unittest.TestCase):
             production = git('rev-parse', 'HEAD')
             git('tag', 'v1.2.3')
             git('tag', 'v1.2.4-rc.1')
+            git('tag', 'v1.2.4-alpha--test.0')
             git('tag', 'v01.2.3')
+            git('tag', 'v1.2.3-rc.01')
             git('push', 'origin', 'main')
             git('switch', '-c', 'develop')
             git('commit', '--allow-empty', '-m', 'development only')
@@ -80,8 +86,10 @@ class WorkflowPolicyTests(unittest.TestCase):
             for tag, sha, success, message in (
                 ('v1.2.3', production, True, ''),
                 ('v1.2.4-rc.1', production, True, ''),
+                ('v1.2.4-alpha--test.0', production, True, ''),
                 ('v1.2.4', development, False, 'reachable from main'),
                 ('v01.2.3', production, False, 'Release tags must use SemVer'),
+                ('v1.2.3-rc.01', production, False, 'Release tags must use SemVer'),
                 ('v1.2.3', development, False, 'instead of'),
             ):
                 with self.subTest(tag=tag, sha=sha):

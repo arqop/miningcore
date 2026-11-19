@@ -2,6 +2,7 @@ name: Release
 
 on:
   push:
+    branches: [ main ]
     tags:
       - 'v*'
   pull_request:
@@ -16,8 +17,9 @@ on:
         default: false
 
 concurrency:
-  group: release-${{ github.ref }}
-  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+  group: release-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: false
+  queue: max
 
 # Advance this published servicing SDK in all three workflows together.
 env:
@@ -31,6 +33,7 @@ jobs:
       contents: read
     outputs:
       version: ${{ steps.release.outputs.version }}
+      production: ${{ steps.release.outputs.production }}
       source_commit: ${{ steps.release.outputs.source_commit }}
       source_date_epoch: ${{ steps.release.outputs.source_date_epoch }}
       target_matrix: ${{ steps.release.outputs.target_matrix }}
@@ -40,7 +43,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          fetch-depth: 1
+          fetch-depth: 0
 
       - name: Resolve one release identity and target matrix
         id: release
@@ -49,8 +52,33 @@ jobs:
           set -euo pipefail
           source scripts/release/linux-release-targets.sh
 
+          source scripts/release/release-version.sh
+          source_commit=$(git rev-parse 'HEAD^{commit}')
+          production=false
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             version="$GITHUB_REF_NAME"
+            miningcore_is_release_tag "$version"
+            production=true
+          elif [[ "$GITHUB_REF" == refs/heads/main && "$GITHUB_EVENT_NAME" == push ]] ||
+               [[ "${GITHUB_BASE_REF:-}" == main && "$GITHUB_EVENT_NAME" == pull_request ]]; then
+            version=$(<VERSION)
+            if ! miningcore_is_release_tag "$version" || [[ "$version" == *-* ]]; then
+              echo 'VERSION must contain one stable vMAJOR.MINOR.PATCH version.' >&2
+              exit 1
+            fi
+            if [[ "$GITHUB_EVENT_NAME" == pull_request ]] &&
+               [[ "$(git show HEAD^1:VERSION 2>/dev/null || true)" == "$version" ]]; then
+              echo "Update VERSION from $version before merging to main." >&2
+              exit 1
+            fi
+            if existing=$(git rev-parse --verify --quiet "refs/tags/$version^{commit}") &&
+               [[ "$existing" != "$source_commit" || "$GITHUB_EVENT_NAME" == pull_request ]]; then
+              echo "Version $version already belongs to $existing. Update VERSION before releasing." >&2
+              exit 1
+            fi
+            if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+              production=true
+            fi
           else
             # One resolver prevents independently versioned matrix legs. Release
             # failures must be recovered with "Re-run all jobs" because Actions
@@ -58,11 +86,11 @@ jobs:
             version="v0.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           fi
 
-          source_commit=$(git rev-parse 'HEAD^{commit}')
           source_date_epoch=$(git show -s --format=%ct "$source_commit")
           target_matrix=$(miningcore_linux_release_matrix_json)
 
           echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "production=$production" >> "$GITHUB_OUTPUT"
           echo "source_commit=$source_commit" >> "$GITHUB_OUTPUT"
           echo "source_date_epoch=$source_date_epoch" >> "$GITHUB_OUTPUT"
           echo "target_matrix=$target_matrix" >> "$GITHUB_OUTPUT"
@@ -485,6 +513,9 @@ jobs:
   build-release:
     name: Test and package Ubuntu ${{ matrix.ubuntu }} x64 (${{ matrix.role }})
     needs: resolve-release
+    env:
+      RELEASE_VERSION: ${{ needs.resolve-release.outputs.version }}
+      EMBED_RELEASE_IDENTITY: ${{ needs.resolve-release.outputs.production == 'true' || github.base_ref == 'main' }}
     runs-on: ${{ matrix.runner }}
     container:
       image: ${{ matrix.image }}
@@ -556,7 +587,8 @@ jobs:
         run: |
           set -euo pipefail
 
-          if [[ ! "$GITHUB_REF_NAME" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]]; then
+          source scripts/release/release-version.sh
+          if ! miningcore_is_release_tag "$GITHUB_REF_NAME"; then
             echo "Release tags must use SemVer, for example v0.1.0-rc.1 or v0.1.0"
             exit 1
           fi
@@ -596,9 +628,9 @@ jobs:
           trap 'rm -f -- "$build_log"' EXIT
 
           build_identity_args=()
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+          if [[ "$EMBED_RELEASE_IDENTITY" == true ]]; then
             build_identity_args+=(
-              "-p:MiningcoreReleaseVersion=${GITHUB_REF_NAME#v}"
+              "-p:MiningcoreReleaseVersion=${RELEASE_VERSION#v}"
               "-p:MiningcoreSourceCommit=$GITHUB_SHA"
             )
           fi
@@ -719,8 +751,8 @@ jobs:
             exit 1
           fi
 
-          if [[ "$GITHUB_REF" == refs/tags/* ]]; then
-            expected_version="${GITHUB_REF_NAME#v} [$GITHUB_SHA]"
+          if [[ "$EMBED_RELEASE_IDENTITY" == true ]]; then
+            expected_version="${RELEASE_VERSION#v} [$GITHUB_SHA]"
 
             if [[ "$version_line" != "$expected_version" ]]; then
               echo "Published binary reports '$version_line'; expected '$expected_version'"
@@ -912,7 +944,7 @@ jobs:
 
   publish-release:
     name: Publish GitHub Release and GHCR image
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: needs.resolve-release.outputs.production == 'true'
     # GitHub Releases and GHCR aliases are repository-wide mutable state. Keep
     # every tag publication in one FIFO queue so freshness inspection and alias
     # promotion cannot interleave across versions.
@@ -929,6 +961,8 @@ jobs:
     runs-on: ubuntu-24.04
     # Bound head-of-line blocking for the repository-wide publication queue.
     timeout-minutes: 60
+    env:
+      MININGCORE_RELEASE_TAG: ${{ needs.resolve-release.outputs.version }}
     services:
       candidate-registry:
         image: registry@sha256:82f6ff4a7f982960c8aa51617fea3aabc485df6e55cce80d22deb1de36f1bc3c
@@ -981,7 +1015,7 @@ jobs:
           matching the host release; native binaries built on Ubuntu 26.04 are not compatible with
           older glibc systems. Ubuntu 24.04 remains a tested source-build target.
 
-          Read the packaged `INSTALL.md` or the [release installation guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/releases.md)
+          Read the packaged `INSTALL.md` or the [release installation guide](https://github.com/${{ github.repository }}/blob/${{ needs.resolve-release.outputs.version }}/docs/releases.md)
           before deployment. Miningcore targets the supported .NET 10 LTS runtime; install the
           documented runtime dependencies and complete all required PostgreSQL migrations before
           startup.
@@ -1011,6 +1045,34 @@ jobs:
           skopeo --version | tee -a "$GITHUB_STEP_SUMMARY"
           dpkg-query --show --showformat='${Package} ${Version}\n' skopeo | tee -a "$GITHUB_STEP_SUMMARY"
           printf '```\n' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Ensure the release tag identifies this main commit
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_COMMIT: ${{ needs.resolve-release.outputs.source_commit }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ref="refs/tags/$MININGCORE_RELEASE_TAG"
+          listed=$(git ls-remote origin "$ref" "$ref^{}")
+          if [[ -z "$listed" ]]; then
+            tag_object=$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/tags" \
+              -f tag="$MININGCORE_RELEASE_TAG" -f message="Miningcore $MININGCORE_RELEASE_TAG" \
+              -f object="$SOURCE_COMMIT" -f type=commit \
+              -f 'tagger[name]=github-actions[bot]' \
+              -f 'tagger[email]=41898282+github-actions[bot]@users.noreply.github.com' \
+              -f "tagger[date]=$(date -u +%FT%TZ)" --jq .sha)
+            gh api --method POST "repos/$GITHUB_REPOSITORY/git/refs" \
+              -f ref="$ref" -f sha="$tag_object" >/dev/null
+            listed=$(git ls-remote origin "$ref" "$ref^{}")
+          fi
+          actual=$(awk -v ref="$ref" '$2 == ref { direct=$1 } $2 == ref "^{}" { peeled=$1 }
+            END { print (peeled ? peeled : direct) }' <<< "$listed")
+          if [[ "$actual" != "$SOURCE_COMMIT" ]]; then
+            echo "Version $MININGCORE_RELEASE_TAG resolves to $actual, expected $SOURCE_COMMIT." >&2
+            exit 1
+          fi
 
       - name: Prepare or resume release publication
         id: publication
@@ -1048,7 +1110,7 @@ jobs:
           tags: |
             type=raw,value=${{ steps.publication.outputs.staging_tag }}
           labels: |
-            org.opencontainers.image.version=${{ github.ref_name }}
+            org.opencontainers.image.version=${{ needs.resolve-release.outputs.version }}
             org.opencontainers.image.revision=${{ needs.resolve-release.outputs.source_commit }}
 
       - name: Build runner-private release candidate

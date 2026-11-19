@@ -3459,29 +3459,34 @@ sync branch from `origin/develop`, merge `upstream/dev`, and open a PR into `dev
 conflicts and review upstream workflow changes before merging. Do not copy upstream tags into the
 fork as releases: Git tags are shared across branches, so select a new, unused version.
 
-In GitHub repository settings, set `develop` as the default branch and enable Actions. Protect
-`develop` and `main` with PR reviews and the non-path-filtered .NET, Stratum and Release checks;
-restrict direct pushes and release-tag creation. Configure permissions to allow the release workflow
-to write releases and packages. Scheduled workflows use the default branch. The tag ancestry check
-is not a substitute for branch or tag protection: an actor who can tag unreviewed workflow code
-could change the check itself. Merge these workflow changes into `main` before creating release tags.
+For each production release, update [VERSION](../VERSION) in the release PR into `main`. Use a new
+stable SemVer version in `vMAJOR.MINOR.PATCH` form. Bump major for incompatible changes, minor for
+backward-compatible features, or patch for backward-compatible fixes. The `main` push builds the
+exact merged commit, creates an annotated Git tag, and publishes the tested archives and GHCR image
+under that version. Merge `main` back into `develop` after the release to carry the version and merge
+ancestry forward. Re-run all jobs on a failed release workflow to resume the same version.
 
-Use `vMAJOR.MINOR.PATCH`, optionally with a prerelease suffix such as `-rc.1`. Major versions signal
-incompatible changes, minor versions backward-compatible features, and patch versions compatible
-fixes; define compatibility expectations explicitly while the major version is zero. Release tags
-do not support SemVer build metadata (`+...`) because OCI tags cannot contain `+`. A prerelease
-does not move the stable `latest` aliases. The release and any earlier release candidate are
-separate builds, not a guarantee of the same image digest.
+Every push to `develop` builds and verifies a Linux amd64 source image and publishes
+`ghcr.io/arqop/miningcore:develop-<full-commit-sha>`. A successful build for the current branch tip
+also updates `ghcr.io/arqop/miningcore:develop`. Production publishes the full version tag, such as
+`ghcr.io/arqop/miningcore:v1.0.0`, and updates the stable aliases according to release precedence.
+
+Set `develop` as the GitHub default branch. Protect `develop` and `main` with PR reviews and require
+the non-path-filtered .NET, Stratum and Release checks. Include **Resolve release identity and
+targets** on `main` so the release PR checks its version before merging. Allow the release workflow
+to create tags and publish releases and packages. Scheduled workflows follow the default branch.
+
+The tag-triggered workflow also accepts explicit tags reachable from `main`, including prereleases
+such as `v1.1.0-rc.1`. A prerelease leaves stable aliases in place. Use a version without a SemVer
+build metadata suffix because OCI tags cannot contain `+`.
 
 After GHCR qualification below, set `GHCR_PUBLICATION_QUALIFIED=true` in Actions variables.
 Following the first publication, make the fork's GHCR package public in package settings and
-verify an anonymous pull. Repository and organization policies may require administrative changes;
-the workflow cannot enable those settings itself.
+verify an anonymous pull.
 
 ### Build and package contract
 
-The release workflow accepts SemVer tags reachable from `main`, for example `v0.4.0-rc.1` or
-`v0.3.0`. It first builds and smoke-tests the Ubuntu 26.04-based source `Dockerfile`, then builds and
+For a production build from `main` or a reachable SemVer tag, the workflow first builds and smoke-tests the Ubuntu 26.04-based source `Dockerfile`, then builds and
 fully tests separate Ubuntu 26.04 primary and Ubuntu 22.04 compatibility archives. The Jammy archive
 is built inside an Ubuntu 22.04 job container on a maintained hosted runner, so its publication does
 not depend on GitHub retaining the retiring `ubuntu-22.04` runner image. Both release lanes use a
@@ -3729,13 +3734,14 @@ runtime version, immutable container tag/digest and prerelease status. Confirm t
 identities match the intended tag and that stable aliases were not advanced. Retain this
 release-boundary evidence before promotion; a successful PR build is not publication evidence.
 
-The tagged build injects the validated tag and commit as assembly metadata because development
+The release build injects the validated version and commit as assembly metadata because development
 branches intentionally retain GitVersion's prerelease calculation; the runtime check requires an
 exact match before packaging can begin.
 This additional source-container gate makes release runs longer but catches Dockerfile-only build
 failures before publication.
 
-Record the full SHA of the release-preparation commit as it actually lands on `main`
+For the manual tag workflow used for the historical RC.1 preparation, record the full SHA of the
+release-preparation commit as it actually lands on `main`
 (the merge commit, or the resulting squash/rebase commit). Validate and commission
 that exact source identity. Tag that recorded SHA, not the later tip of `main` or
 the PR head/synthetic test-merge ref. Later changes may use the next-cycle Unreleased

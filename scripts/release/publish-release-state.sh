@@ -4,6 +4,7 @@ set -euo pipefail
 
 publication_script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 readonly publication_script_dir
+source "$publication_script_dir/release-version.sh"
 publication_repository_root=$(cd "$publication_script_dir/../.." && pwd)
 readonly publication_repository_root
 readonly publication_manifest_name=CONTAINER-IMAGE.json
@@ -15,7 +16,7 @@ Usage: publish-release-state.sh <prepare|record|publish|promote>
 
 Required environment:
   GITHUB_REPOSITORY              owner/repository
-  GITHUB_REF_NAME                immutable v-prefixed release tag
+  MININGCORE_RELEASE_TAG          immutable v-prefixed release tag (defaults to GITHUB_REF_NAME)
   MININGCORE_SOURCE_COMMIT       commit named by the release tag
   MININGCORE_IMAGE               lowercase GHCR image name
   MININGCORE_RELEASE_ASSET_DIR   tested archive/checksum directory
@@ -75,7 +76,8 @@ publication_require_tools() {
 
 publication_validate_environment() {
   : "${GITHUB_REPOSITORY:?GITHUB_REPOSITORY is required}"
-  : "${GITHUB_REF_NAME:?GITHUB_REF_NAME is required}"
+  MININGCORE_RELEASE_TAG=${MININGCORE_RELEASE_TAG:-${GITHUB_REF_NAME:-}}
+  : "${MININGCORE_RELEASE_TAG:?A release tag is required}"
   : "${MININGCORE_SOURCE_COMMIT:?MININGCORE_SOURCE_COMMIT is required}"
   : "${MININGCORE_IMAGE:?MININGCORE_IMAGE is required}"
   : "${MININGCORE_RELEASE_ASSET_DIR:?MININGCORE_RELEASE_ASSET_DIR is required}"
@@ -85,10 +87,8 @@ publication_validate_environment() {
     publication_die "invalid GitHub repository identity '$GITHUB_REPOSITORY'"
   fi
 
-  # Build metadata (+suffix) is intentionally excluded because '+' is not a
-  # legal OCI tag character. This also keeps every promoted tag reversible.
-  if [[ ! "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
-    publication_die "release tag '$GITHUB_REF_NAME' is not a supported v-prefixed SemVer tag"
+  if ! miningcore_is_release_tag "$MININGCORE_RELEASE_TAG"; then
+    publication_die "release tag '$MININGCORE_RELEASE_TAG' is not a supported v-prefixed SemVer tag"
   fi
 
   if [[ ! "$MININGCORE_SOURCE_COMMIT" =~ ^[0-9a-fA-F]{40}$ ]]; then
@@ -118,12 +118,12 @@ publication_validate_environment() {
   MININGCORE_RELEASE_NOTES_FILE=$(realpath "$MININGCORE_RELEASE_NOTES_FILE")
   export MININGCORE_RELEASE_NOTES_FILE
 
-  PUBLICATION_STAGING_TAG="publication-staging-$GITHUB_REF_NAME"
+  PUBLICATION_STAGING_TAG="publication-staging-$MININGCORE_RELEASE_TAG"
   PUBLICATION_STAGING_REFERENCE="$MININGCORE_IMAGE:$PUBLICATION_STAGING_TAG"
-  PUBLICATION_VERSION=${GITHUB_REF_NAME#v}
-  PUBLICATION_EXPECTED_TITLE="Miningcore $GITHUB_REF_NAME"
+  PUBLICATION_VERSION=${MININGCORE_RELEASE_TAG#v}
+  PUBLICATION_EXPECTED_TITLE="Miningcore $MININGCORE_RELEASE_TAG"
   PUBLICATION_DRAFT_MARKER="<!-- miningcore-release-publication:v$publication_draft_marker_version"
-  PUBLICATION_DRAFT_MARKER+=" repository=$GITHUB_REPOSITORY tag=$GITHUB_REF_NAME"
+  PUBLICATION_DRAFT_MARKER+=" repository=$GITHUB_REPOSITORY tag=$MININGCORE_RELEASE_TAG"
   PUBLICATION_DRAFT_MARKER+=" source=${MININGCORE_SOURCE_COMMIT,,} -->"
   export PUBLICATION_STAGING_TAG PUBLICATION_STAGING_REFERENCE PUBLICATION_VERSION
   export PUBLICATION_EXPECTED_TITLE PUBLICATION_DRAFT_MARKER
@@ -194,7 +194,7 @@ publication_refresh_release() {
   local draft_title_matches
   local draft_marker_matches
 
-  if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+  if [[ "$MININGCORE_RELEASE_TAG" == *-* ]]; then
     expected_prerelease=true
   fi
 
@@ -208,11 +208,11 @@ publication_refresh_release() {
     # paginated list is the authoritative discovery source for drafts and
     # published releases; exactly one tag match fails closed on ambiguity.
     publication_api_list_releases "$release_list"
-    matches=$(jq --arg tag "$GITHUB_REF_NAME" \
+    matches=$(jq --arg tag "$MININGCORE_RELEASE_TAG" \
       '[.[][] | select(.tag_name == $tag)] | length' "$release_list")
     if [[ "$matches" -gt 1 ]]; then
       publication_die \
-        "GitHub returned $matches releases for tag '$GITHUB_REF_NAME'; state is ambiguous"
+        "GitHub returned $matches releases for tag '$MININGCORE_RELEASE_TAG'; state is ambiguous"
     fi
     if [[ "$matches" -eq 0 ]]; then
       rm -f -- "$release_file"
@@ -222,11 +222,11 @@ publication_refresh_release() {
       return
     fi
 
-    jq --arg tag "$GITHUB_REF_NAME" \
+    jq --arg tag "$MININGCORE_RELEASE_TAG" \
       '[.[][] | select(.tag_name == $tag)][0]' "$release_list" > "$release_file"
   fi
 
-  if ! jq -e --arg tag "$GITHUB_REF_NAME" \
+  if ! jq -e --arg tag "$MININGCORE_RELEASE_TAG" \
       '.tag_name == $tag and
        (.id | type == "number" and . > 0 and floor == .) and
        (.draft | type == "boolean") and
@@ -243,12 +243,12 @@ publication_refresh_release() {
          ((.digest == null) or
            (.digest | type == "string" and test("^sha256:[0-9a-f]{64}$"))))' \
       "$release_file" >/dev/null; then
-    publication_die "GitHub returned an invalid release record for '$GITHUB_REF_NAME'"
+    publication_die "GitHub returned an invalid release record for '$MININGCORE_RELEASE_TAG'"
   fi
 
   if [[ $(jq -r '.prerelease' "$release_file") != "$expected_prerelease" ]]; then
     publication_die \
-      "release '$GITHUB_REF_NAME' prerelease classification does not match its tag;" \
+      "release '$MININGCORE_RELEASE_TAG' prerelease classification does not match its tag;" \
       "restore the expected GitHub prerelease setting before retrying"
   fi
 
@@ -256,7 +256,7 @@ publication_refresh_release() {
       [[ $(jq -r '.id' "$release_file") != "$PUBLICATION_RELEASE_ID" ]]; then
     publication_die \
       "GitHub release identity changed: expected id $PUBLICATION_RELEASE_ID for" \
-      "'$GITHUB_REF_NAME'"
+      "'$MININGCORE_RELEASE_TAG'"
   fi
 
   PUBLICATION_RELEASE_ID=$(jq -r '.id' "$release_file")
@@ -276,16 +276,16 @@ publication_refresh_release() {
 
     if [[ "$draft_title_matches" == false && "$draft_marker_matches" == false ]]; then
       publication_die \
-        "draft release '$GITHUB_REF_NAME' fails both workflow collision checks: expected" \
+        "draft release '$MININGCORE_RELEASE_TAG' fails both workflow collision checks: expected" \
         "title is '$PUBLICATION_EXPECTED_TITLE', and the repository/tag/source collision" \
         "marker is missing or mismatched; preserve it for review before retrying"
     elif [[ "$draft_title_matches" == false ]]; then
       publication_die \
-        "draft release '$GITHUB_REF_NAME' does not have the expected workflow title" \
+        "draft release '$MININGCORE_RELEASE_TAG' does not have the expected workflow title" \
         "'$PUBLICATION_EXPECTED_TITLE'; preserve it for review before retrying"
     elif [[ "$draft_marker_matches" == false ]]; then
       publication_die \
-        "draft release '$GITHUB_REF_NAME' does not contain the expected workflow collision" \
+        "draft release '$MININGCORE_RELEASE_TAG' does not contain the expected workflow collision" \
         "marker for repository, tag and source commit; its notes may have been edited," \
         "the tag source may have moved, or another actor may have created the draft"
     fi
@@ -315,7 +315,7 @@ publication_asset_id() {
   count=$(jq --arg name "$asset_name" \
     '[.assets[] | select(.name == $name)] | length' "$release_file")
   if [[ "$count" -gt 1 ]]; then
-    publication_die "release '$GITHUB_REF_NAME' contains duplicate asset '$asset_name'"
+    publication_die "release '$MININGCORE_RELEASE_TAG' contains duplicate asset '$asset_name'"
   fi
 
   if [[ "$count" -eq 0 ]]; then
@@ -514,7 +514,7 @@ publication_validate_asset_inventory() {
 
   while IFS= read -r asset_name_json; do
     if ! asset_name=$(jq -er 'select(type == "string")' <<< "$asset_name_json"); then
-      publication_die "release '$GITHUB_REF_NAME' contains an invalid asset name"
+      publication_die "release '$MININGCORE_RELEASE_TAG' contains an invalid asset name"
     fi
     found=false
     for candidate in "${expected[@]}"; do
@@ -526,7 +526,7 @@ publication_validate_asset_inventory() {
 
     if [[ "$found" != true ]]; then
       publication_die \
-        "release '$GITHUB_REF_NAME' contains unexpected asset '$asset_name';" \
+        "release '$MININGCORE_RELEASE_TAG' contains unexpected asset '$asset_name';" \
         "do not replace or delete it automatically"
     fi
   done < <(jq -c '.assets[].name' "$release_file")
@@ -545,7 +545,7 @@ publication_sync_candidate_assets() {
       publication_verify_candidate_asset "$asset_name"
     else
       publication_die \
-        "published release '$GITHUB_REF_NAME' is missing '$asset_name'" \
+        "published release '$MININGCORE_RELEASE_TAG' is missing '$asset_name'" \
         "and cannot be repaired automatically"
     fi
   done < <(printf '%s\n' "${PUBLICATION_CANDIDATE_ASSETS[@]}")
@@ -561,7 +561,7 @@ publication_create_draft() {
   } > "$owned_notes"
 
   release_args=(
-    "$GITHUB_REF_NAME"
+    "$MININGCORE_RELEASE_TAG"
     --draft
     --latest=false
     --verify-tag
@@ -570,7 +570,7 @@ publication_create_draft() {
     --generate-notes
   )
 
-  if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+  if [[ "$MININGCORE_RELEASE_TAG" == *-* ]]; then
     release_args+=(--prerelease)
   fi
 
@@ -594,13 +594,13 @@ publication_wait_for_draft_release() {
     fi
     if [[ "$PUBLICATION_RELEASE_STATE" == published ]]; then
       publication_die \
-        "draft creation unexpectedly exposed a published release for '$GITHUB_REF_NAME'"
+        "draft creation unexpectedly exposed a published release for '$MININGCORE_RELEASE_TAG'"
     fi
   done
 
   publication_die \
     "GitHub accepted draft creation but the authenticated release list did not expose" \
-    "'$GITHUB_REF_NAME' after bounded retries"
+    "'$MININGCORE_RELEASE_TAG' after bounded retries"
 }
 
 publication_wait_for_release_asset() {
@@ -726,7 +726,7 @@ publication_write_manifest() {
     --arg stagingTag "$PUBLICATION_STAGING_TAG" \
     --arg digest "$digest" \
     --arg sourceCommit "${MININGCORE_SOURCE_COMMIT,,}" \
-    --arg releaseTag "$GITHUB_REF_NAME" \
+    --arg releaseTag "$MININGCORE_RELEASE_TAG" \
     '{
       schemaVersion: 1,
       image: $image,
@@ -751,7 +751,7 @@ publication_read_recorded_digest() {
     --arg image "$MININGCORE_IMAGE" \
     --arg stagingTag "$PUBLICATION_STAGING_TAG" \
     --arg sourceCommit "${MININGCORE_SOURCE_COMMIT,,}" \
-    --arg releaseTag "$GITHUB_REF_NAME" \
+    --arg releaseTag "$MININGCORE_RELEASE_TAG" \
     '.schemaVersion == 1 and
      .image == $image and
      .stagingTag == $stagingTag and
@@ -759,7 +759,7 @@ publication_read_recorded_digest() {
      .releaseTag == $releaseTag and
      (.digest | type == "string")' "$manifest" >/dev/null; then
     publication_die \
-      "release '$GITHUB_REF_NAME' contains an invalid or foreign $publication_manifest_name"
+      "release '$MININGCORE_RELEASE_TAG' contains an invalid or foreign $publication_manifest_name"
   fi
 
   PUBLICATION_RECORDED_DIGEST=$(jq -r '.digest' "$manifest")
@@ -772,7 +772,7 @@ publication_assert_immutable_tags_match_record() {
   local matching_reference=
 
   for reference in \
-      "$MININGCORE_IMAGE:$GITHUB_REF_NAME" \
+      "$MININGCORE_IMAGE:$MININGCORE_RELEASE_TAG" \
       "$MININGCORE_IMAGE:$PUBLICATION_VERSION"; do
     if ! publication_optional_digest "$reference"; then
       continue
@@ -853,7 +853,7 @@ publication_prepare() {
     fi
   elif [[ "$PUBLICATION_RELEASE_STATE" == published ]]; then
     publication_die \
-      "published release '$GITHUB_REF_NAME' lacks $publication_manifest_name" \
+      "published release '$MININGCORE_RELEASE_TAG' lacks $publication_manifest_name" \
       "and cannot be repaired automatically"
   fi
 
@@ -919,7 +919,7 @@ publication_record() {
     fi
   else
     publication_die \
-      "published release '$GITHUB_REF_NAME' lacks $publication_manifest_name"
+      "published release '$MININGCORE_RELEASE_TAG' lacks $publication_manifest_name"
   fi
 
   publication_append_output digest "$stage_digest"
@@ -929,7 +929,7 @@ publication_record() {
 publication_verify_complete_release() {
   publication_sync_candidate_assets
   if ! publication_read_recorded_digest; then
-    publication_die "release '$GITHUB_REF_NAME' lacks $publication_manifest_name"
+    publication_die "release '$MININGCORE_RELEASE_TAG' lacks $publication_manifest_name"
   fi
   publication_assert_container_evidence
 }
@@ -940,7 +940,7 @@ publication_publish_release_by_id() {
   local error_file
   local expected_prerelease=false
 
-  if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+  if [[ "$MININGCORE_RELEASE_TAG" == *-* ]]; then
     expected_prerelease=true
   fi
 
@@ -958,7 +958,7 @@ publication_publish_release_by_id() {
   fi
   rm -f -- "$error_file"
 
-  if ! jq -e --arg tag "$GITHUB_REF_NAME" \
+  if ! jq -e --arg tag "$MININGCORE_RELEASE_TAG" \
       --argjson id "$PUBLICATION_RELEASE_ID" \
       --argjson prerelease "$expected_prerelease" \
       '.id == $id and
@@ -996,12 +996,12 @@ publication_publish() {
 
   publication_refresh_release
   if [[ "$PUBLICATION_RELEASE_STATE" == absent ]]; then
-    publication_die "release '$GITHUB_REF_NAME' is absent"
+    publication_die "release '$MININGCORE_RELEASE_TAG' is absent"
   fi
 
   publication_verify_complete_release
   if [[ "$PUBLICATION_RELEASE_STATE" == draft ]]; then
-    if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+    if [[ "$MININGCORE_RELEASE_TAG" != *-* ]]; then
       publication_resolve_mutable_alias_freshness
       make_latest=$PUBLICATION_MAY_PROMOTE_LATEST
     fi
@@ -1010,7 +1010,7 @@ publication_publish() {
     publication_verify_complete_release
   fi
 
-  printf 'Durable GitHub Release verified: %s\n' "$GITHUB_REF_NAME"
+  printf 'Durable GitHub Release verified: %s\n' "$MININGCORE_RELEASE_TAG"
 }
 
 publication_promote_immutable_tag() {
@@ -1102,11 +1102,11 @@ publication_resolve_mutable_alias_freshness() {
     publication_die "published stable-release tags could not be read authoritatively"
   fi
 
-  current_occurrences=$(jq --arg tag "$GITHUB_REF_NAME" \
+  current_occurrences=$(jq --arg tag "$MININGCORE_RELEASE_TAG" \
     '[.[][] | select(.tag_name == $tag)] | length' "$release_list")
   if [[ "$current_occurrences" -ne 1 ]]; then
     publication_die \
-      "release '$GITHUB_REF_NAME' occurred $current_occurrences times" \
+      "release '$MININGCORE_RELEASE_TAG' occurred $current_occurrences times" \
       "in the authoritative release list"
   fi
 
@@ -1137,23 +1137,23 @@ publication_promote() {
   fi
   publication_verify_complete_release
 
-  publication_promote_immutable_tag "$MININGCORE_IMAGE:$GITHUB_REF_NAME"
+  publication_promote_immutable_tag "$MININGCORE_IMAGE:$MININGCORE_RELEASE_TAG"
   publication_promote_immutable_tag "$MININGCORE_IMAGE:$PUBLICATION_VERSION"
 
-  if [[ "$GITHUB_REF_NAME" != *-* ]]; then
+  if [[ "$MININGCORE_RELEASE_TAG" != *-* ]]; then
     major_minor=${PUBLICATION_VERSION%.*}
     publication_resolve_mutable_alias_freshness
     if [[ "$PUBLICATION_MAY_PROMOTE_LINE_ALIAS" == true ]]; then
       publication_promote_mutable_tag "$MININGCORE_IMAGE:$major_minor"
     else
       printf 'Preserving newer %s alias; %s is not the newest stable release in that line\n' \
-        "$major_minor" "$GITHUB_REF_NAME"
+        "$major_minor" "$MININGCORE_RELEASE_TAG"
     fi
     if [[ "$PUBLICATION_MAY_PROMOTE_LATEST" == true ]]; then
       publication_promote_mutable_tag "$MININGCORE_IMAGE:latest"
     else
       printf 'Preserving newer latest alias; %s is not the newest stable release\n' \
-        "$GITHUB_REF_NAME"
+        "$MININGCORE_RELEASE_TAG"
     fi
   fi
 
