@@ -5,8 +5,8 @@ on:
     tags:
       - 'v*'
   pull_request:
-    branches: [ dev ]
-    # Test source container is a required dev check. Every PR must report it,
+    branches: [ develop, main ]
+    # Test source container is a required check. Every PR must report it,
     # including changes outside application/build paths; do not path-filter it.
   workflow_dispatch:
     inputs:
@@ -567,9 +567,9 @@ jobs:
             exit 1
           fi
 
-          git fetch --no-tags origin dev
-          if ! git merge-base --is-ancestor "${GITHUB_SHA}^{commit}" origin/dev; then
-            echo "Release tag $GITHUB_REF_NAME does not point to a commit reachable from dev"
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}^{commit}" origin/main; then
+            echo "Release tag $GITHUB_REF_NAME does not point to a commit reachable from main"
             exit 1
           fi
 
@@ -981,7 +981,7 @@ jobs:
           matching the host release; native binaries built on Ubuntu 26.04 are not compatible with
           older glibc systems. Ubuntu 24.04 remains a tested source-build target.
 
-          Read the packaged `INSTALL.md` or the [release installation guide](https://github.com/NINJAK1DD/miningcore/blob/dev/docs/releases.md)
+          Read the packaged `INSTALL.md` or the [release installation guide](https://github.com/${{ github.repository }}/blob/${{ github.ref_name }}/docs/releases.md)
           before deployment. Miningcore targets the supported .NET 10 LTS runtime; install the
           documented runtime dependencies and complete all required PostgreSQL migrations before
           startup.

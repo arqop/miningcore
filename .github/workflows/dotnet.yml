@@ -17,9 +17,9 @@ on:
         type: boolean
         default: false
   push:
-    branches: [ master, dev, ravencoin-rollback ]
+    branches: [ develop, main ]
   pull_request:
-    branches: [ master, dev, ravencoin-rollback ]
+    branches: [ develop, main ]
 
 # Advance this published servicing SDK in all three workflows together.
 env:

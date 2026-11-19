@@ -2,7 +2,10 @@
 """Guard source-container cache, deadlines, provenance and Docker stage boundaries."""
 from pathlib import Path
 from fnmatch import fnmatchcase
+import os
 import re
+import subprocess
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import yaml
@@ -32,6 +35,62 @@ def serviced_image(docker, family, minimum, stage=None):
 
 
 class WorkflowPolicyTests(unittest.TestCase):
+    def test_build_checks_cover_develop_and_main(self):
+        for name in ('dotnet.yml', 'stratum-portability.yml'):
+            workflow = yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
+            for event in ('push', 'pull_request'):
+                with self.subTest(workflow=name, event=event):
+                    self.assertEqual(['develop', 'main'], workflow['on'][event]['branches'])
+        for name in ('docker-image.yml', 'release-image-pins.yml'):
+            workflow = yaml.load((ROOT / '.github/workflows' / name).read_text(), Loader=yaml.BaseLoader)
+            with self.subTest(workflow=name):
+                self.assertEqual(['develop', 'main'], workflow['on']['pull_request']['branches'])
+
+    def test_release_tag_validation_requires_main_ancestry(self):
+        workflow = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
+        step = next(step for step in workflow['jobs']['build-release']['steps']
+                    if step.get('name') == 'Validate release tag')
+        self.assertEqual("startsWith(github.ref, 'refs/tags/')", step['if'])
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            remote = root / 'remote.git'
+            repository = root / 'work'
+            subprocess.run(['git', 'init', '--bare', str(remote)], check=True, capture_output=True)
+            subprocess.run(['git', 'init', '-b', 'main', str(repository)], check=True, capture_output=True)
+
+            def git(*args):
+                return subprocess.run(['git', '-C', str(repository), *args], check=True,
+                                      capture_output=True, text=True).stdout.strip()
+
+            git('config', 'user.name', 'Release test')
+            git('config', 'user.email', 'release-test@example.invalid')
+            git('config', 'commit.gpgsign', 'false')
+            git('remote', 'add', 'origin', str(remote))
+            git('commit', '--allow-empty', '-m', 'production')
+            production = git('rev-parse', 'HEAD')
+            git('tag', 'v1.2.3')
+            git('tag', 'v1.2.4-rc.1')
+            git('tag', 'v01.2.3')
+            git('push', 'origin', 'main')
+            git('switch', '-c', 'develop')
+            git('commit', '--allow-empty', '-m', 'development only')
+            development = git('rev-parse', 'HEAD')
+            git('tag', 'v1.2.4')
+
+            for tag, sha, success, message in (
+                ('v1.2.3', production, True, ''),
+                ('v1.2.4-rc.1', production, True, ''),
+                ('v1.2.4', development, False, 'reachable from main'),
+                ('v01.2.3', production, False, 'Release tags must use SemVer'),
+                ('v1.2.3', development, False, 'instead of'),
+            ):
+                with self.subTest(tag=tag, sha=sha):
+                    env = dict(os.environ, GITHUB_REF_NAME=tag, GITHUB_SHA=sha)
+                    result = subprocess.run(['bash', '-c', step['run']], cwd=repository,
+                                            env=env, capture_output=True, text=True)
+                    self.assertEqual(success, result.returncode == 0, result.stdout + result.stderr)
+                    self.assertIn(message, result.stdout + result.stderr)
+
     def test_ghcr_qualification_is_opt_in_and_has_only_registry_write_permission(self):
         workflow = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual('false', workflow['on']['workflow_dispatch']['inputs']['qualify_ghcr']['default'])
@@ -235,7 +294,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         group = docker['groups']['dotnet-images']
         self.assertEqual('dependency-name', group['group-by'])
         self.assertEqual('weekly', docker['schedule']['interval'])
-        self.assertEqual('dev', docker['target-branch'])
+        self.assertEqual('develop', docker['target-branch'])
         discovered = set()
         for relative in ('Dockerfile', 'packaging/docker/Dockerfile.release'):
             path = Path(relative)
@@ -355,12 +414,12 @@ class WorkflowPolicyTests(unittest.TestCase):
             self.assertNotIn('check-canonical-servicing.sh', step.get('run', ''))
         self.require_source_validation(steps, setup, build, selection)
 
-    def test_required_source_check_runs_for_every_dev_pull_request(self):
+    def test_required_source_check_runs_for_every_protected_branch_pull_request(self):
         workflow = yaml.load((ROOT / '.github/workflows/release.yml').read_text(), Loader=yaml.BaseLoader)
         trigger = workflow['on']['pull_request']
-        self.assertEqual(['dev'], trigger['branches'])
+        self.assertEqual(['develop', 'main'], trigger['branches'])
         for key in ('paths', 'paths-ignore', 'branches-ignore', 'types'):
-            self.assertNotIn(key, trigger, 'Required source check must report on every dev PR')
+            self.assertNotIn(key, trigger, 'Required source check must report on every protected branch PR')
         job = workflow['jobs']['source-container-check']
         self.assertEqual('Test source container', job['name'])
         self.assertNotIn('if', job, 'Required source check must not be skipped by a job condition')
@@ -437,7 +496,7 @@ class WorkflowPolicyTests(unittest.TestCase):
         workflow = yaml.load((ROOT / '.github/workflows/source-container-cache.yml').read_text(), Loader=yaml.BaseLoader)
         self.assertEqual({'contents': 'read'}, workflow['permissions'])
         self.assertEqual({'push', 'schedule', 'workflow_dispatch'}, set(workflow['on']))
-        self.assertEqual(['dev'], workflow['on']['push']['branches'])
+        self.assertEqual(['develop'], workflow['on']['push']['branches'])
         job = workflow['jobs']['dependencies']
         builds = [step for step in job['steps'] if 'docker/build-push-action@' in step.get('uses', '')]
         self.assertEqual(1, len(builds))

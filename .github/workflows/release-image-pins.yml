@@ -2,7 +2,7 @@ name: Release image pin freshness
 
 on:
   pull_request:
-    branches: [ master, dev, ravencoin-rollback ]
+    branches: [ develop, main ]
     # Path-filtered checks do not report a status on unrelated pull requests.
     # Do not configure this workflow as a required branch-protection check.
     paths:

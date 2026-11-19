@@ -2,9 +2,9 @@ name: Stratum listener portability
 
 on:
   push:
-    branches: [ master, dev, ravencoin-rollback ]
+    branches: [ develop, main ]
   pull_request:
-    branches: [ master, dev, ravencoin-rollback ]
+    branches: [ develop, main ]
   workflow_dispatch:
 
 permissions:

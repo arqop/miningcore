@@ -2,7 +2,7 @@ name: Source container dependency cache
 
 on:
   push:
-    branches: [ dev ]
+    branches: [ develop ]
     paths:
       - 'Dockerfile'
       - 'scripts/release/container-apt-install.sh'
