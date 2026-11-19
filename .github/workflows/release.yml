@@ -48,6 +48,8 @@ jobs:
       - name: Resolve one release identity and target matrix
         id: release
         shell: bash
+        env:
+          BEFORE_COMMIT: ${{ github.event.before }}
         run: |
           set -euo pipefail
           source scripts/release/linux-release-targets.sh
@@ -55,6 +57,8 @@ jobs:
           source scripts/release/release-version.sh
           source_commit=$(git rev-parse 'HEAD^{commit}')
           production=false
+          # Keep CI archive names attempt-scoped for artifact recovery.
+          ci_version="v0.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
           if [[ "$GITHUB_REF" == refs/tags/* ]]; then
             version="$GITHUB_REF_NAME"
             miningcore_is_release_tag "$version"
@@ -71,19 +75,24 @@ jobs:
               echo "Update VERSION from $version before merging to main." >&2
               exit 1
             fi
-            if existing=$(git rev-parse --verify --quiet "refs/tags/$version^{commit}") &&
-               [[ "$existing" != "$source_commit" || "$GITHUB_EVENT_NAME" == pull_request ]]; then
-              echo "Version $version already belongs to $existing. Update VERSION before releasing." >&2
-              exit 1
-            fi
-            if [[ "$GITHUB_EVENT_NAME" == push ]]; then
+            existing=$(git rev-parse --verify --quiet "refs/tags/$version^{commit}" || true)
+            if [[ -n "$existing" && "$existing" != "$source_commit" ]]; then
+              if [[ "$GITHUB_EVENT_NAME" == push ]] &&
+                 [[ "$(git show "${BEFORE_COMMIT}:VERSION" 2>/dev/null || true)" == "$version" ]] &&
+                 git merge-base --is-ancestor "$existing" "$source_commit"; then
+                # Maintenance pushes can carry forward the version on main.
+                # Release PRs must change it and existing tags stay immutable.
+                echo "VERSION remains $version. Running CI without a new release."
+                version=$ci_version
+              else
+                echo "Version $version already belongs to $existing. Update VERSION before releasing." >&2
+                exit 1
+              fi
+            elif [[ "$GITHUB_EVENT_NAME" == push ]]; then
               production=true
             fi
           else
-            # One resolver prevents independently versioned matrix legs. Release
-            # failures must be recovered with "Re-run all jobs" because Actions
-            # artifact downloads are scoped to the latest run attempt.
-            version="v0.0.0-ci.${GITHUB_RUN_ID}.${GITHUB_RUN_ATTEMPT}"
+            version=$ci_version
           fi
 
           source_date_epoch=$(git show -s --format=%ct "$source_commit")

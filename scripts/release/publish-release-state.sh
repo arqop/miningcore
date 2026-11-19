@@ -476,7 +476,7 @@ publication_load_candidate_assets() {
 
   source "$publication_repository_root/scripts/release/linux-release-targets.sh"
   for target in "${MININGCORE_LINUX_RELEASE_TARGETS[@]}"; do
-    expected_archive="miningcore-${GITHUB_REF_NAME}-linux-x64-ubuntu-${target}.tar.gz"
+    expected_archive="miningcore-${MININGCORE_RELEASE_TAG}-linux-x64-ubuntu-${target}.tar.gz"
     if [[ ! -f "$MININGCORE_RELEASE_ASSET_DIR/$expected_archive" ]]; then
       publication_die "tested asset directory is missing '$expected_archive'"
     fi

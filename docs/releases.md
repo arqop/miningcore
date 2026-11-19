@@ -3464,7 +3464,9 @@ stable SemVer version in `vMAJOR.MINOR.PATCH` form. Bump major for incompatible 
 backward-compatible features, or patch for backward-compatible fixes. The `main` push builds the
 exact merged commit, creates an annotated Git tag, and publishes the tested archives and GHCR image
 under that version. Merge `main` back into `develop` after the release to carry the version and merge
-ancestry forward. Re-run all jobs on a failed release workflow to resume the same version.
+ancestry forward. A direct maintenance push carrying forward the version already tagged on
+`main` runs CI without creating a new release. Re-run all jobs on a failed release workflow to
+resume the same version.
 
 Every push to `develop` builds and verifies a Linux amd64 source image and publishes
 `ghcr.io/arqop/miningcore:develop-<full-commit-sha>`. A successful build for the current branch tip

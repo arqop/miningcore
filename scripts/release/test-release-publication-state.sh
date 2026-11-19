@@ -83,6 +83,8 @@ reset_fake_services() {
   mkdir -p "$FAKE_ROOT/assets" "$FAKE_ROOT/candidate"
 
   export GITHUB_REPOSITORY=example/miningcore
+  FAKE_RELEASE_TAG=$release_tag
+  unset MININGCORE_RELEASE_TAG
   export GITHUB_REF_NAME=$release_tag
   export MININGCORE_SOURCE_COMMIT=0123456789abcdef0123456789abcdef01234567
   export MININGCORE_IMAGE=ghcr.io/example/miningcore
@@ -140,7 +142,7 @@ fake_release_json() {
   local assets_json
 
   [[ "$visible_state" == draft ]] && draft=true
-  [[ "$GITHUB_REF_NAME" == *-* ]] && prerelease=true
+  [[ "$FAKE_RELEASE_TAG" == *-* ]] && prerelease=true
   if [[ -n "$FAKE_RELEASE_PRERELEASE" ]]; then
     prerelease=$FAKE_RELEASE_PRERELEASE
   fi
@@ -153,7 +155,7 @@ fake_release_json() {
     fi
   done < <(find "$FAKE_ROOT/assets" -maxdepth 1 -type f -printf '%f\n' | sort) | jq -s '.')
 
-  jq -n --arg tag "$GITHUB_REF_NAME" --argjson draft "$draft" \
+  jq -n --arg tag "$FAKE_RELEASE_TAG" --argjson draft "$draft" \
     --argjson prerelease "$prerelease" --argjson latest "$FAKE_RELEASE_LATEST" \
     --arg name "$FAKE_RELEASE_NAME" --arg body "$FAKE_RELEASE_BODY" \
     --argjson assets "$assets_json" \
@@ -257,7 +259,7 @@ gh() {
 
     # Match GitHub's contract: tag lookup sees published releases, while the
     # authenticated release list is required to discover drafts.
-    if [[ "$endpoint" == "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" ]]; then
+    if [[ "$endpoint" == "repos/$GITHUB_REPOSITORY/releases/tags/$FAKE_RELEASE_TAG" ]]; then
       if [[ "$FAKE_RELEASE_STATE" != published ]]; then
         echo 'HTTP 404: Not Found' >&2
         return 1
@@ -288,7 +290,7 @@ gh() {
         latest_value=${latest_value#make_latest=}
         [[ "$latest_value" == true || "$latest_value" == false ]] ||
           fail 'Release publication supplied an invalid make_latest value'
-        if [[ "$GITHUB_REF_NAME" == *-* && "$latest_value" != false ]]; then
+        if [[ "$FAKE_RELEASE_TAG" == *-* && "$latest_value" != false ]]; then
           fail 'Prerelease publication attempted to become latest'
         fi
         FAKE_RELEASE_STATE=published
@@ -313,21 +315,21 @@ gh() {
 
   if [[ "$1 $2" == 'release create' ]]; then
     [[ "$FAKE_RELEASE_STATE" == absent ]] || fail 'Draft was created twice'
-    [[ "$3" == "$GITHUB_REF_NAME" ]] || fail 'Draft used the wrong release tag'
+    [[ "$3" == "$FAKE_RELEASE_TAG" ]] || fail 'Draft used the wrong release tag'
     fake_has_argument --draft "$@" || fail 'Draft creation omitted --draft'
     fake_has_argument --verify-tag "$@" || fail 'Draft creation omitted --verify-tag'
     fake_has_argument --generate-notes "$@" || fail 'Draft creation omitted --generate-notes'
     fake_has_argument --latest=false "$@" || fail 'Draft creation did not force --latest=false'
     ! fake_has_argument --latest=true "$@" || fail 'Draft creation requested latest=true'
     title=$(fake_argument_after --title "$@")
-    [[ "$title" == "Miningcore $GITHUB_REF_NAME" ]] || fail 'Draft used wrong release title'
+    [[ "$title" == "Miningcore $FAKE_RELEASE_TAG" ]] || fail 'Draft used wrong release title'
     source=$(fake_argument_after --notes-file "$@")
     [[ "$source" != "$MININGCORE_RELEASE_NOTES_FILE" ]] ||
       fail 'Draft ownership marker was not isolated in a generated notes file'
     grep -Fq "$FAKE_EXPECTED_DRAFT_MARKER" "$source" ||
       fail 'Draft notes omitted the workflow ownership marker'
     grep -Fq 'release notes' "$source" || fail 'Draft notes omitted the release preamble'
-    if [[ "$GITHUB_REF_NAME" == *-* ]]; then
+    if [[ "$FAKE_RELEASE_TAG" == *-* ]]; then
       fake_has_argument --prerelease "$@" || fail 'Prerelease draft omitted --prerelease'
     else
       ! fake_has_argument --prerelease "$@" || fail 'Stable draft was marked prerelease'
@@ -484,6 +486,14 @@ complete_publication() {
   run_command promote
 }
 
+scenario_main_branch_uses_selected_version() (
+  reset_fake_services main-branch
+  export GITHUB_REF_NAME=main
+  export MININGCORE_RELEASE_TAG=$FAKE_RELEASE_TAG
+  complete_publication
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
+)
+
 scenario_interrupted_publication_resumes() (
   reset_fake_services interrupted
   FAKE_DRAFT_VISIBILITY_LAG_AFTER_CREATE=2
@@ -495,7 +505,7 @@ scenario_interrupted_publication_resumes() (
   [[ "$FAKE_RELEASE_STATE" == draft ]] || fail 'Prepare did not create a draft'
   grep -Fxq 'needs_container_build=true' "$GITHUB_OUTPUT"
 
-  if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$GITHUB_REF_NAME" \
+  if gh api "repos/$GITHUB_REPOSITORY/releases/tags/$FAKE_RELEASE_TAG" \
       > /dev/null 2>&1; then
     fail 'Fake tag endpoint exposed a draft release'
   fi
@@ -507,7 +517,7 @@ scenario_interrupted_publication_resumes() (
   run_command record
 
   [[ "$FAKE_RELEASE_STATE" == draft ]] || fail 'Fault point unexpectedly published the release'
-  assert_reference_absent "$MININGCORE_IMAGE:$GITHUB_REF_NAME"
+  assert_reference_absent "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG"
   assert_reference_absent "$MININGCORE_IMAGE:1.2.3"
   assert_reference_digest "$MININGCORE_IMAGE:1.2" "$previous_digest"
   assert_reference_digest "$MININGCORE_IMAGE:latest" "$previous_digest"
@@ -524,7 +534,7 @@ scenario_interrupted_publication_resumes() (
   [[ "$FAKE_RELEASE_STATE" == published ]] || fail 'Retry did not publish the draft'
   [[ "$FAKE_RELEASE_LAST_PUBLISH_LATEST" == true ]] ||
     fail 'Newest stable release was not marked latest at durable publication'
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:latest" "$expected_digest"
@@ -542,7 +552,7 @@ scenario_older_rerun_preserves_newer_surfaces() (
 
   [[ "$FAKE_RELEASE_LAST_PUBLISH_LATEST" == false ]] ||
     fail 'Older stable release moved GitHub latest backward'
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2" "$conflicting_digest"
   assert_reference_digest "$MININGCORE_IMAGE:latest" "$conflicting_digest"
@@ -557,7 +567,7 @@ scenario_prerelease_never_moves_mutable_surfaces() (
 
   [[ "$FAKE_RELEASE_LAST_PUBLISH_LATEST" == false ]] ||
     fail 'Prerelease became GitHub latest'
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3-rc.1" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2" "$previous_digest"
   assert_reference_digest "$MININGCORE_IMAGE:latest" "$previous_digest"
@@ -579,7 +589,7 @@ scenario_completed_release_survives_pruned_stage_and_metadata_edits() (
   run_command publish
   run_command promote
 
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3" "$expected_digest"
 )
 
@@ -589,7 +599,7 @@ scenario_legacy_assets_without_server_digests_use_byte_fallback() (
 
   complete_publication
 
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3" "$expected_digest"
 )
 
@@ -605,7 +615,7 @@ scenario_completed_release_recovers_from_one_immutable_tag() (
   grep -Fxq 'needs_container_build=false' "$GITHUB_OUTPUT"
   run_command promote
 
-  assert_reference_digest "$MININGCORE_IMAGE:$GITHUB_REF_NAME" "$expected_digest"
+  assert_reference_digest "$MININGCORE_IMAGE:$FAKE_RELEASE_TAG" "$expected_digest"
   assert_reference_digest "$MININGCORE_IMAGE:1.2.3" "$expected_digest"
 )
 
@@ -655,7 +665,7 @@ scenario_conflicting_version_tag_fails_closed() (
   export MININGCORE_CONTAINER_DIGEST=$expected_digest
   run_command record
   run_command publish
-  FAKE_REFERENCES["$MININGCORE_IMAGE:$GITHUB_REF_NAME"]=$conflicting_digest
+  FAKE_REFERENCES["$MININGCORE_IMAGE:$FAKE_RELEASE_TAG"]=$conflicting_digest
   run_command promote
 )
 
@@ -687,7 +697,7 @@ scenario_non_authoritative_registry_failure_is_fatal() (
 
 scenario_stage_without_release_is_ambiguous() (
   reset_fake_services orphan-stage
-  FAKE_REFERENCES["$MININGCORE_IMAGE:publication-staging-$GITHUB_REF_NAME"]=$expected_digest
+  FAKE_REFERENCES["$MININGCORE_IMAGE:publication-staging-$FAKE_RELEASE_TAG"]=$expected_digest
   run_command prepare
 )
 
@@ -763,6 +773,7 @@ scenario_asset_visibility_timeout_fails_closed() (
   run_command prepare
 )
 
+scenario_main_branch_uses_selected_version
 scenario_interrupted_publication_resumes
 scenario_older_rerun_preserves_newer_surfaces
 scenario_prerelease_never_moves_mutable_surfaces
